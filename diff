@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <title>投資スクリーニングモニター（CSV対応）</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <style>
+    body { font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif; background:#f7f7f7; margin:20px; }
+    h1 { font-size:1.4rem; }
+    select, input[type=range], input[type=file] { margin:4px 0; }
+    table { border-collapse: collapse; width:100%; background:#fff; margin-top:15px; }
+    th, td { border:1px solid #ddd; padding:8px; text-align:center; }
+    th { background:#f0f0f0; cursor:pointer; }
+    .good { background:#e6f4ea; }
+    .mid { background:#fff7e6; }
+    .bad { background:#fdecea; }
+    .comment { margin-top:20px; background:#fff; padding:15px; border-radius:6px; }
+    .slider { max-width:420px; background:#fff; padding:10px; border-radius:6px; margin-top:10px; }
+    textarea { width:100%; height:60px; }
+  </style>
+</head>
+<body>
+
+<h1>📊 投資スクリーニングモニター（CSV対応）</h1>
+
+<p><strong>① CSVを読み込む</strong></p>
+<input type="file" id="csvFile" accept=".csv">
+
+<p><strong>② 業種選択</strong></p>
+<select id="industry"></select>
+
+<div class="slider">
+  <strong>評価ウェイト</strong><br>
+  ROE <input type="range" id="wRoe" min="0" max="5" value="2"> <span id="vRoe"></span><br>
+  粗利 <input type="range" id="wMargin" min="0" max="5" value="2"> <span id="vMargin"></span><br>
+  FCF <input type="range" id="wFcf" min="0" max="5" value="3"> <span id="vFcf"></span><br>
+  借金 <input type="range" id="wDebt" min="0" max="5" value="3"> <span id="vDebt"></span>
+</div>
+
+<table id="stockTable">
+  <thead>
+    <tr>
+      <th data-sort="name">企業</th>
+      <th>国</th>
+      <th data-sort="roe">ROE</th>
+      <th data-sort="margin">粗利率</th>
+      <th>FCF</th>
+      <th>借金</th>
+      <th data-sort="score">総合評価</th>
+      <th>投資判断</th>
+      <th>PER</th>
+      <th>PSR</th>
+      <th>配当</th>
+      <th>🚨売り</th>
+    </tr>
+  </thead>
+  <tbody></tbody>
+</table>
+
+<div class="comment" id="analysis"></div>
+
+<script>
+let rawData = [];
+let currentSort = { key:null, asc:false };
+
+function sellSignal(s) {
+  let a=[];
+  if (s.per>40) a.push('PER過熱');
+  if (s.psr>10) a.push('PSR高');
+  if (s.div<1 && s.per>25) a.push('利回り低');
+  return a.length?'⚠️'+a.join('・'):'—';
+}
+
+function score(s){
+  return s.roe*wRoe.value + (s.margin/20)*wMargin.value + s.fcf*wFcf.value + s.debt*wDebt.value;
+}
+
+const tbody=document.querySelector('tbody');
+const analysis=document.getElementById('analysis');
+
+function render(){
+  const key=industry.value;
+  const stocks=rawData.filter(s=>s.industry===key);
+  stocks.forEach(s=>s.score=score(s));
+  if(currentSort.key)stocks.sort((a,b)=>currentSort.asc?(a[currentSort.key]-b[currentSort.key]):(b[currentSort.key]-a[currentSort.key]));
+
+  tbody.innerHTML='';
+  stocks.forEach(s=>{
+    const tr=document.createElement('tr');
+    tr.className=s.score>=40?'good':s.score>=25?'mid':'bad';
+    tr.innerHTML=`<td>${s.name}</td><td>${s.country}</td><td>${s.roe}</td><td>${s.margin}</td><td>${s.fcf}</td><td>${s.debt}</td><td>${s.score.toFixed(1)}</td><td>${s.score>=40?'買い':s.score>=25?'様子見':'除外'}</td><td>${s.per}</td><td>${s.psr}</td><td>${s.div}%</td><td>${sellSignal(s)}</td>`;
+    tbody.appendChild(tr);
+  });
+
+  analysis.innerHTML='<h3>🧠 定性コメント</h3>'+stocks.map(s=>`<p><strong>${s.name}</strong><br>▶5年後：${s.outlook}<br>▶売り：${s.sellView}<br><textarea placeholder="あなたのコメント"></textarea></p>`).join('');
+  ['Roe','Margin','Fcf','Debt'].forEach(k=>document.getElementById('v'+k).textContent=document.getElementById('w'+k).value);
+}
+
+Array.from(document.querySelectorAll('th[data-sort]')).forEach(th=>{
+  th.onclick=()=>{currentSort={key:th.dataset.sort,asc:!currentSort.asc};render();};
+});
+
+['wRoe','wMargin','wFcf','wDebt'].forEach(id=>document.getElementById(id).oninput=render);
+industry.onchange=render;
+
+csvFile.onchange=e=>{
+  const file=e.target.files[0];
+  const r=new FileReader();
+  r.onload=()=>{
+    const lines=r.result.split(/\r?\n/).filter(l=>l);
+    const head=lines.shift().split(',');
+    rawData=lines.map(l=>{
+      const v=l.split(',');
+      let o={};head.forEach((h,i)=>o[h]=v[i]);
+      return {
+        industry:o.industry,
+        name:o.name,
+        country:o.country,
+        roe:+o.roe,
+        margin:+o.margin,
+        fcf:+o.fcf,
+        debt:+o.debt,
+        per:+o.per,
+        psr:+o.psr,
+        div:+o.div,
+        outlook:o.outlook,
+        sellView:o.sellView
+      };
+    });
+    const inds=[...new Set(rawData.map(s=>s.industry))];
+    industry.innerHTML=inds.map(i=>`<option value="${i}">${i}</option>`).join('');
+    render();
+  };
+  r.readAsText(file);
+};
+</script>
+
+</body>
+</html>
